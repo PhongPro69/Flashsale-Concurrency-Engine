@@ -1,0 +1,3 @@
+﻿# Mark static frontend files as vendored/excluded from repository language calculation
+app/static/* linguist-vendored
+*.html linguist-detectable=false

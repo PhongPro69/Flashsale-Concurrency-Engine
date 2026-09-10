@@ -14,7 +14,7 @@ Chắc hẳn bạn từng nghe qua cảnh hàng triệu người tranh nhau săn
 Là sinh viên IT / Khoa học Dữ liệu, mình tò mò: **"Tại sao các hệ thống lớn lại bị lỗi này? Và làm sao để code một hệ thống không bao giờ bị bán âm vé dù bị cả nghìn người bấm mua cùng 1 giây?"**
 
 Dự án này là phòng thí nghiệm (Lab) thực nghiệm đối đầu trực tiếp:
-- **Kịch bản 1 (Code kiểu sinh viên thường làm):** Dùng Database truyền thống (SQLite) đọc - kiểm tra - ghi. Kết quả: **BỊ BÁN ÂM VÉ (106/100 vé)**.
+- **Kịch bản 1 (Code kiểu thông thường):** Dùng Database truyền thống (SQLite) đọc - kiểm tra - ghi. Kết quả: **BỊ BÁN ÂM VÉ (106/100 vé)**.
 - **Kịch bản 2 (Chuẩn thực tế công nghiệp):** Dùng **Redis Atomic** xử lý ngay trên RAM. Kết quả: **CHÍNH XÁC 100/100 VÉ (Zero Oversell)**, độ trễ nhanh hơn **71 lần**.
 
 ---
@@ -101,16 +101,6 @@ $env:PYTHONIOENCODING="utf-8"
 # 4. Mở terminal mới và chạy toàn bộ bài test + tự xuất 2 biểu đồ:
 .\.venv\Scripts\python.exe run_full_benchmark.py
 ```
-
----
-
-## 📝 Đoạn Mẫu Đưa Vào CV (Dành Cho Sinh Viên)
-
-> **Flash-Sale Concurrency Engine & Anti-Overselling Telemetry**  
-> *Công nghệ: Python (FastAPI, AsyncIO), Redis (In-Memory Atomic), SQLite (WAL Mode), Pandas, Matplotlib*  
-> - Xây dựng hệ thống mô phỏng bán vé đồng thời, giải quyết triệt để lỗi **Race Condition** và **Bán âm vé (Overselling)** khi 300+ request cùng tranh mua 100 vé tồn kho.
-> - Thực nghiệm đối chiếu cho thấy code CRUD thông thường làm **bán lố 6% vé (106/100 vé)** với độ trễ đuôi $p_{99} = 1,502\text{ ms}$; trong khi cơ chế Redis Atomic đảm bảo **100% Zero-Oversell** và giảm độ trễ $p_{50}$ xuống **0.82 ms (nhanh hơn 71 lần)**.
-> - Tự động hóa pipeline thu thập dữ liệu telemetry độ trễ thời gian thực; phân tích phân vị ($p_{50}, p_{90}, p_{99}$) và trực quan hóa biểu đồ phân bố độ trễ bằng Pandas & Matplotlib.
 
 ---
 ---
@@ -212,16 +202,6 @@ $env:PYTHONIOENCODING="utf-8"
 # 4. Run automated benchmark & chart regeneration in another terminal:
 .\.venv\Scripts\python.exe run_full_benchmark.py
 ```
-
----
-
-## 📄 Resume / CV Ready Bullet Points
-
-> **High-Throughput Flash-Sale Concurrency Engine & Anti-Overselling Telemetry**  
-> *Tech Stack: Python (FastAPI, AsyncIO), Redis (In-Memory Atomic Operations), SQLite (WAL Mode), Pandas, Matplotlib, HTTPX*  
-> - Engineered an asynchronous concurrency testing lab resolving **Race Conditions** and **Inventory Overselling** under 300+ concurrent requests on a 100-ticket inventory.
-> - Empirically demonstrated that naive RDBMS read-check-write patterns caused **6% overselling (106/100 tickets)** with tail latency $p_{99} = 1,502\text{ ms}$, whereas Redis In-Memory Atomic achieved **100% Zero-Oversell** and slashed median latency $p_{50}$ to **0.82 ms (71x speedup)**.
-> - Built an automated telemetry pipeline collecting real-time request latencies, computing percentiles ($p_{50}, p_{90}, p_{99}$), and rendering inventory burn-down and latency distribution curves using Pandas and Matplotlib.
 
 ---
 

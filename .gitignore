@@ -17,3 +17,6 @@ __pycache__/
 .vscode/
 .idea/
 *.log
+
+# Private Notes
+MY_CV_NOTES.md

@@ -1,0 +1,1156 @@
+<!DOCTYPE html>
+<html lang="vi" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FlashSale Concurrency Lab</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #07070a;
+      --surface: #0e0e14;
+      --surface-2: #141420;
+      --border: #1c1c2a;
+      --border-light: #262636;
+      --text: #e2e2f0;
+      --text-muted: #6b6b85;
+      --text-dim: #3d3d52;
+      --accent: #7c6af7;
+      --accent-glow: rgba(124,106,247,0.15);
+      --green: #22c55e;
+      --green-glow: rgba(34,197,94,0.12);
+      --red: #ef4444;
+      --red-glow: rgba(239,68,68,0.12);
+      --amber: #f59e0b;
+      --cinema-red: #8b0000;
+      --curtain: #4a0a0a;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      height: 100%;
+      color: var(--text);
+      font-family: 'Inter', sans-serif;
+      font-size: 13px;
+      -webkit-font-smoothing: antialiased;
+      overflow: hidden;
+    }
+
+    /* ── CINEMA BACKGROUND ── */
+    body {
+      background-color: #07070a;
+      /* Subtle film grain overlay */
+      background-image:
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='300' height='300' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E"),
+        radial-gradient(ellipse 80% 60% at 50% -10%, rgba(124,106,247,0.08) 0%, transparent 70%),
+        radial-gradient(ellipse 40% 50% at 0% 50%,   rgba(80,10,10,0.18) 0%, transparent 60%),
+        radial-gradient(ellipse 40% 50% at 100% 50%, rgba(80,10,10,0.18) 0%, transparent 60%),
+        radial-gradient(ellipse 100% 40% at 50% 100%, rgba(20,10,40,0.4) 0%, transparent 70%);
+    }
+
+    /* Curtain panels — pseudo elements on .app */
+    .app {
+      display: flex; height: 100vh; overflow: hidden;
+      position: relative;
+    }
+    .app::before, .app::after {
+      content: '';
+      position: fixed; top: 0; bottom: 0;
+      width: 56px;
+      z-index: 0;
+      pointer-events: none;
+    }
+    /* Left curtain */
+    .app::before {
+      left: 220px; /* after sidebar */
+      background: linear-gradient(90deg,
+        rgba(90,10,10,0.55) 0%,
+        rgba(60,6,6,0.25) 40%,
+        transparent 100%);
+      /* Vertical velvet folds */
+      box-shadow: inset -8px 0 16px rgba(0,0,0,0.3);
+    }
+    /* Right curtain */
+    .app::after {
+      right: 0;
+      background: linear-gradient(270deg,
+        rgba(90,10,10,0.55) 0%,
+        rgba(60,6,6,0.25) 40%,
+        transparent 100%);
+      box-shadow: inset 8px 0 16px rgba(0,0,0,0.3);
+    }
+
+    /* Projection light cone from top-center */
+    .cinema-projector {
+      position: fixed;
+      top: 0; left: 50%; transform: translateX(-50%);
+      width: 600px; height: 55vh;
+      background: radial-gradient(ellipse 40% 100% at 50% 0%,
+        rgba(255,248,220,0.04) 0%,
+        rgba(255,248,220,0.015) 40%,
+        transparent 100%);
+      pointer-events: none; z-index: 0;
+      animation: projFlicker 8s ease-in-out infinite alternate;
+    }
+    @keyframes projFlicker {
+      0%   { opacity: 0.7; }
+      30%  { opacity: 1;   }
+      70%  { opacity: 0.8; }
+      100% { opacity: 0.95; }
+    }
+
+    /* Faint horizontal scan lines (CRT/projector feel) */
+    .scanlines {
+      position: fixed; inset: 0; pointer-events: none; z-index: 1;
+      background: repeating-linear-gradient(
+        to bottom,
+        transparent 0px,
+        transparent 3px,
+        rgba(0,0,0,0.06) 3px,
+        rgba(0,0,0,0.06) 4px
+      );
+    }
+
+    /* ─── SIDEBAR ─── */
+    .sidebar {
+      width: 220px;
+      min-width: 220px;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      position: relative;
+      z-index: 10;
+    }
+
+    /* ─── MAIN AREA ─── */
+    .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; position: relative; z-index: 10; }
+
+    .sidebar-logo {
+      padding: 18px 16px 14px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .logo-icon {
+      width: 30px; height: 30px;
+      background: linear-gradient(135deg, #7c6af7 0%, #a855f7 100%);
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px;
+      flex-shrink: 0;
+      box-shadow: 0 0 16px rgba(124,106,247,0.35);
+    }
+    .logo-text { font-weight: 700; font-size: 13px; color: var(--text); letter-spacing: -0.01em; line-height: 1.2; }
+    .logo-sub  { font-size: 10px; color: var(--text-muted); font-family: 'Geist Mono', monospace; }
+
+    .nav-section { padding: 10px 8px 4px; }
+    .nav-label {
+      font-size: 10px; font-weight: 600;
+      color: var(--text-dim);
+      text-transform: uppercase; letter-spacing: 0.08em;
+      padding: 0 8px 6px;
+    }
+    .nav-item {
+      display: flex; align-items: center; gap: 8px;
+      padding: 7px 8px; border-radius: 6px;
+      cursor: pointer; color: var(--text-muted);
+      font-weight: 500; font-size: 12.5px;
+      transition: all 0.15s;
+      margin-bottom: 1px;
+      user-select: none;
+    }
+    .nav-item:hover { background: var(--surface-2); color: var(--text); }
+    .nav-item.active { background: var(--accent-glow); color: var(--accent); }
+    .nav-item .nav-icon { font-size: 14px; width: 18px; text-align: center; }
+    .nav-badge {
+      margin-left: auto;
+      font-size: 10px; font-family: 'Geist Mono', monospace;
+      background: var(--surface-2); border: 1px solid var(--border-light);
+      color: var(--text-muted); padding: 1px 6px; border-radius: 20px;
+    }
+    .nav-badge.green { background: var(--green-glow); border-color: rgba(34,197,94,0.3); color: var(--green); }
+    .nav-badge.red { background: var(--red-glow); border-color: rgba(239,68,68,0.3); color: var(--red); }
+
+    .sidebar-bottom {
+      margin-top: auto;
+      padding: 10px 8px;
+      border-top: 1px solid var(--border);
+    }
+    .status-chip {
+      display: flex; align-items: center; gap: 7px;
+      padding: 7px 8px; border-radius: 6px;
+      background: var(--surface-2); border: 1px solid var(--border);
+      font-size: 11px; color: var(--text-muted); font-family: 'Geist Mono', monospace;
+    }
+    .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); flex-shrink: 0;
+           box-shadow: 0 0 6px var(--green); animation: blink 2s infinite; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+    /* ─── MAIN AREA ─── */
+    .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+    /* Topbar */
+    .topbar {
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      padding: 0 20px;
+      height: 48px;
+      display: flex; align-items: center; justify-content: space-between;
+      flex-shrink: 0;
+    }
+    .topbar-breadcrumb { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); }
+    .topbar-breadcrumb .sep { color: var(--text-dim); }
+    .topbar-breadcrumb .active { color: var(--text); font-weight: 600; }
+    .topbar-actions { display: flex; align-items: center; gap: 8px; }
+
+    .btn {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 5px 11px; border-radius: 6px; font-size: 12px; font-weight: 500;
+      cursor: pointer; transition: all 0.15s; border: 1px solid transparent;
+      font-family: inherit; white-space: nowrap;
+    }
+    .btn:active { transform: translateY(1px); }
+    .btn-ghost { background: transparent; border-color: var(--border-light); color: var(--text-muted); }
+    .btn-ghost:hover { background: var(--surface-2); color: var(--text); border-color: var(--border-light); }
+    .btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .btn-primary:hover { filter: brightness(1.1); }
+    .btn-danger { background: var(--red-glow); color: var(--red); border-color: rgba(239,68,68,0.3); }
+    .btn-danger:hover { background: rgba(239,68,68,0.2); }
+
+    /* Scrollable content */
+    .content { flex: 1; overflow-y: auto; padding: 22px; }
+    .content::-webkit-scrollbar { width: 5px; }
+    .content::-webkit-scrollbar-track { background: transparent; }
+    .content::-webkit-scrollbar-thumb { background: var(--border-light); border-radius: 4px; }
+
+    /* Section heading */
+    .section-header { margin-bottom: 14px; }
+    .section-title { font-size: 14px; font-weight: 700; color: var(--text); letter-spacing: -0.01em; }
+    .section-desc { font-size: 11.5px; color: var(--text-muted); margin-top: 2px; line-height: 1.5; }
+
+    /* ─── KPI CHIPS ─── */
+    .kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 18px; }
+    .kpi-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; padding: 13px 14px;
+    }
+    .kpi-label { font-size: 10px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
+    .kpi-value { font-family: 'Geist Mono', monospace; font-size: 22px; font-weight: 700; color: var(--text); line-height: 1; }
+    .kpi-value.green { color: var(--green); }
+    .kpi-value.red { color: var(--red); }
+    .kpi-value.amber { color: var(--amber); }
+    .kpi-sub { font-size: 10px; color: var(--text-dim); margin-top: 4px; font-family: 'Geist Mono', monospace; }
+
+    /* ─── COMPARISON PANEL ─── */
+    .compare-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 18px; }
+    .panel {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 10px; overflow: hidden;
+    }
+    .panel-header {
+      padding: 13px 14px 11px;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: flex-start; justify-content: space-between;
+    }
+    .panel-title { font-size: 12.5px; font-weight: 700; color: var(--text); }
+    .panel-subtitle { font-size: 10.5px; color: var(--text-muted); margin-top: 2px; font-family: 'Geist Mono', monospace; }
+    .tag {
+      font-size: 10px; font-weight: 600; font-family: 'Geist Mono', monospace;
+      padding: 2px 8px; border-radius: 4px; flex-shrink: 0;
+    }
+    .tag-red { background: var(--red-glow); color: var(--red); border: 1px solid rgba(239,68,68,0.25); }
+    .tag-green { background: var(--green-glow); color: var(--green); border: 1px solid rgba(34,197,94,0.25); }
+    .tag-amber { background: rgba(245,158,11,0.1); color: var(--amber); border: 1px solid rgba(245,158,11,0.25); }
+
+    .panel-body { padding: 13px 14px; }
+
+    .metric-row { display: flex; align-items: center; justify-content: space-between; padding: 7px 0; border-bottom: 1px solid var(--border); }
+    .metric-row:last-child { border-bottom: none; }
+    .metric-name { font-size: 11px; color: var(--text-muted); }
+    .metric-val { font-family: 'Geist Mono', monospace; font-size: 12px; font-weight: 600; color: var(--text); }
+    .metric-val.green { color: var(--green); }
+    .metric-val.red { color: var(--red); }
+    .metric-val.amber { color: var(--amber); }
+
+    .panel-footer { padding: 10px 14px; border-top: 1px solid var(--border); display: flex; gap: 7px; }
+
+    /* ─── SEAT MAP ─── */
+    .seat-panel {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      margin-bottom: 18px;
+      overflow: hidden;
+      /* Cinema hall SVG background */
+      background-color: #06060a;
+      background-image:
+        /* Left wall accent */
+        linear-gradient(90deg, rgba(60,5,5,0.4) 0%, transparent 18%),
+        /* Right wall accent */
+        linear-gradient(270deg, rgba(60,5,5,0.4) 0%, transparent 18%),
+        /* Floor gradient — darker toward viewer */
+        linear-gradient(180deg,
+          rgba(12,10,20,0) 0%,
+          rgba(8,6,14,0.6) 60%,
+          rgba(4,3,8,0.9) 100%),
+        /* Subtle ceiling-to-floor ambient */
+        radial-gradient(ellipse 100% 70% at 50% -20%,
+          rgba(180,160,255,0.05) 0%, transparent 60%);
+    }
+    .seat-panel-header {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+      background: rgba(0,0,0,0.3);
+      backdrop-filter: blur(4px);
+    }
+
+    /* Entire seat map area */
+    .seat-map-wrap {
+      padding: 0;
+      position: relative;
+    }
+
+    /* SVG Cinema Hall illustration behind seats */
+    .cinema-hall-bg {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0.55;
+    }
+
+    /* Screen container + glow effect */
+    .screen-wrap {
+      padding: 20px 40px 0;
+      position: relative;
+      z-index: 2;
+    }
+    .stage-bar {
+      width: 100%;
+      height: 36px;
+      border-radius: 6px 6px 0 0;
+      background: linear-gradient(180deg,
+        rgba(255,255,255,0.22) 0%,
+        rgba(255,255,255,0.10) 50%,
+        rgba(255,255,255,0.03) 100%);
+      border: 1px solid rgba(255,255,255,0.28);
+      border-bottom: none;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px; letter-spacing: 0.3em;
+      color: rgba(255,255,255,0.4);
+      font-weight: 700; text-transform: uppercase;
+      position: relative;
+      /* Screen glow spread */
+      box-shadow:
+        0 -8px 40px rgba(255,255,255,0.08),
+        0 0 80px rgba(200,190,255,0.04),
+        inset 0 1px 0 rgba(255,255,255,0.15);
+    }
+    /* Projection cone from screen */
+    .stage-bar::before {
+      content: '';
+      position: absolute;
+      top: 100%; left: 10%; right: 10%;
+      height: 200px;
+      background: linear-gradient(180deg,
+        rgba(255,252,230,0.06) 0%,
+        rgba(255,252,230,0.02) 40%,
+        transparent 100%);
+      pointer-events: none;
+    }
+    /* Reflection line below screen */
+    .stage-bar::after {
+      content: '';
+      position: absolute; top: 100%; left: 5%; right: 5%;
+      height: 12px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.06), transparent);
+    }
+
+    /* Aisle + seats container */
+    .seats-area {
+      position: relative; z-index: 2;
+      padding: 14px 40px 20px;
+    }
+
+    /* Seat grid — FULL WIDTH, no max-width cap */
+    .seats-grid {
+      display: grid;
+      grid-template-columns: repeat(10, 1fr);
+      gap: 7px;
+      width: 100%;
+    }
+
+    /* Individual seat */
+    .seat {
+      aspect-ratio: 1;
+      border-radius: 5px 5px 3px 3px;
+      background: linear-gradient(180deg, #1c1c28 0%, #131320 100%);
+      border: 1px solid #2a2a3a;
+      border-bottom: 4px solid #0d0d18; /* depth shadow */
+      display: flex; align-items: center; justify-content: center;
+      font-size: 9px; font-family: 'Geist Mono', monospace;
+      color: #3d3d55;
+      transition: all 0.25s cubic-bezier(0.4,0,0.2,1);
+      cursor: default;
+      position: relative;
+    }
+    /* Seat headrest bump */
+    .seat::before {
+      content: '';
+      position: absolute;
+      top: -5px; left: 22%; right: 22%;
+      height: 5px;
+      border-radius: 4px 4px 0 0;
+      background: #252535;
+      border: 1px solid #2a2a3a;
+      border-bottom: none;
+    }
+    /* Available — green tint */
+    .seat.available {
+      background: linear-gradient(180deg, rgba(34,197,94,0.18) 0%, rgba(34,197,94,0.08) 100%);
+      border-color: rgba(34,197,94,0.45);
+      border-bottom-color: rgba(34,197,94,0.15);
+      color: rgba(34,197,94,0.6);
+      box-shadow: 0 0 8px rgba(34,197,94,0.08);
+    }
+    .seat.available::before {
+      background: rgba(34,197,94,0.35);
+      border-color: rgba(34,197,94,0.4);
+    }
+    /* Taken — collapsed, dark */
+    .seat.taken {
+      background: linear-gradient(180deg, #16161f 0%, #0f0f18 100%);
+      border-color: #1e1e2c;
+      border-bottom-color: #0a0a12;
+      color: #2a2a3a;
+      transform: scaleY(0.88);
+      transform-origin: bottom;
+    }
+    .seat.taken::before { background: #1a1a28; border-color: #1e1e2c; }
+    /* Oversold — red pulse */
+    .seat.oversold {
+      background: linear-gradient(180deg, rgba(239,68,68,0.3) 0%, rgba(239,68,68,0.12) 100%);
+      border-color: rgba(239,68,68,0.65);
+      border-bottom-color: rgba(239,68,68,0.25);
+      color: #ef4444;
+      box-shadow: 0 0 12px rgba(239,68,68,0.2);
+      animation: pulse-red 1.2s ease-in-out infinite;
+    }
+    .seat.oversold::before { background: rgba(239,68,68,0.5); border-color: rgba(239,68,68,0.6); }
+    @keyframes pulse-red {
+      0%,100% { opacity:1; box-shadow:0 0 12px rgba(239,68,68,0.2); }
+      50% { opacity:0.65; box-shadow:0 0 20px rgba(239,68,68,0.4); }
+    }
+
+    .seat-legend {
+      display: flex; gap: 22px; justify-content: center;
+      padding: 0 40px 18px;
+      position: relative; z-index: 2;
+    }
+    .legend-item { display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--text-muted); }
+    .legend-dot { width: 11px; height: 11px; border-radius: 3px; }
+
+    /* ─── TERMINAL ─── */
+    .terminal-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+    .terminal-header { padding: 10px 14px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+    .terminal-dots { display: flex; gap: 5px; }
+    .terminal-dot { width: 10px; height: 10px; border-radius: 50%; }
+    .terminal-body {
+      background: #08080d; padding: 10px 12px;
+      font-family: 'Geist Mono', monospace; font-size: 11px;
+      height: 220px; overflow-y: auto; line-height: 1.7;
+    }
+    .terminal-body::-webkit-scrollbar { width: 4px; }
+    .terminal-body::-webkit-scrollbar-track { background: transparent; }
+    .terminal-body::-webkit-scrollbar-thumb { background: var(--border-light); border-radius: 2px; }
+
+    .log-row { display: flex; align-items: center; gap: 8px; padding: 1px 0; }
+    .log-time { color: var(--text-dim); }
+    .log-mode-naive { color: #f87171; }
+    .log-mode-atomic { color: #4ade80; }
+    .log-user { color: var(--text-muted); }
+    .log-ok { color: var(--green); font-weight: 600; }
+    .log-fail { color: var(--text-dim); }
+    .log-ms { color: var(--text-dim); margin-left: auto; }
+
+    /* Alert banner */
+    .alert-banner {
+      display: none; margin-top: 8px;
+      padding: 8px 11px; border-radius: 6px;
+      font-size: 11px; font-family: 'Geist Mono', monospace; font-weight: 600;
+      background: var(--red-glow); border: 1px solid rgba(239,68,68,0.35); color: var(--red);
+      animation: shake 0.4s ease;
+    }
+    @keyframes shake { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-4px)} 75%{transform:translateX(4px)} }
+    .alert-banner.show { display: flex; align-items: center; gap: 7px; }
+
+    /* Progress bar */
+    .progress-wrap { margin-top: 8px; }
+    .progress-label { display: flex; justify-content: space-between; font-size: 10px; color: var(--text-muted); font-family: 'Geist Mono', monospace; margin-bottom: 4px; }
+    .progress-bar { height: 3px; background: var(--border-light); border-radius: 2px; overflow: hidden; }
+    .progress-fill { height: 100%; border-radius: 2px; transition: width 0.4s ease; }
+    .progress-fill.green { background: var(--green); }
+    .progress-fill.red { background: var(--red); }
+
+    /* Tabs */
+    .tabs { display: flex; gap: 1px; padding: 4px; background: var(--border); border-radius: 7px; margin-bottom: 16px; }
+    .tab { flex: 1; padding: 6px 10px; border-radius: 5px; text-align: center; font-size: 12px; font-weight: 500; color: var(--text-muted); cursor: pointer; transition: all 0.15s; }
+    .tab.active { background: var(--surface); color: var(--text); box-shadow: 0 1px 4px rgba(0,0,0,0.4); }
+
+    /* Scrollbar global */
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border-light); border-radius: 4px; }
+
+    /* Transition fade in for panels */
+    [data-view] { display: none; }
+    [data-view].visible { display: block; animation: fadeIn 0.2s ease; }
+    @keyframes fadeIn { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:translateY(0)} }
+
+    /* Tooltip */
+    .tooltip-wrap { position: relative; }
+    .tooltip-wrap:hover .tooltip { opacity: 1; pointer-events: none; }
+    .tooltip {
+      position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%);
+      background: #1c1c26; border: 1px solid var(--border-light);
+      color: var(--text-muted); font-size: 10px; white-space: nowrap;
+      padding: 4px 8px; border-radius: 5px; margin-bottom: 5px;
+      opacity: 0; transition: opacity 0.15s; font-family: 'Geist Mono', monospace;
+      pointer-events: none;
+    }
+
+    /* Mobile guard */
+    @media (max-width: 900px) {
+      .sidebar { display: none; }
+      .kpi-row { grid-template-columns: repeat(2, 1fr); }
+      .compare-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+<!-- Cinema atmosphere layers -->
+<div class="cinema-projector"></div>
+<div class="scanlines"></div>
+
+<div class="app">
+
+  <!-- ═══════════════ SIDEBAR ═══════════════ -->
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-icon">🎟</div>
+      <div>
+        <div class="logo-text">FlashSale Lab</div>
+        <div class="logo-sub">Concurrency Engine</div>
+      </div>
+    </div>
+
+    <div class="nav-section">
+      <div class="nav-label">Workspace</div>
+      <div class="nav-item active" onclick="switchView('overview')">
+        <span class="nav-icon">⬡</span> Overview
+      </div>
+      <div class="nav-item" onclick="switchView('compare')">
+        <span class="nav-icon">⇄</span> So sánh kịch bản
+        <span class="nav-badge" id="badge-compare">2</span>
+      </div>
+      <div class="nav-item" onclick="switchView('seatmap')">
+        <span class="nav-icon">◫</span> Sơ đồ khán đài
+      </div>
+      <div class="nav-item" onclick="switchView('logs')">
+        <span class="nav-icon">≡</span> Telemetry Log
+        <span class="nav-badge" id="badge-logs">0</span>
+      </div>
+    </div>
+
+    <div class="nav-section">
+      <div class="nav-label">Hành động</div>
+      <div class="nav-item tooltip-wrap" onclick="doReset()">
+        <span class="nav-icon">↺</span> Reset kho vé
+        <div class="tooltip">Đặt lại 100 vé & xóa log</div>
+      </div>
+      <div class="nav-item" onclick="window.open('/api/export-csv')">
+        <span class="nav-icon">↓</span> Xuất CSV
+      </div>
+      <div class="nav-item" onclick="window.open('/docs')" >
+        <span class="nav-icon">⧉</span> API Docs
+      </div>
+    </div>
+
+    <div class="sidebar-bottom">
+      <div class="status-chip">
+        <div class="dot"></div>
+        <div>
+          <div id="redis-label" style="color:var(--text);font-weight:600;font-size:11px;">In-Memory</div>
+          <div style="font-size:10px;">Redis Fakeredis</div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ═══════════════ MAIN ═══════════════ -->
+  <div class="main">
+
+    <!-- Topbar -->
+    <div class="topbar">
+      <div class="topbar-breadcrumb">
+        <span>FlashSale Lab</span>
+        <span class="sep">/</span>
+        <span class="active" id="topbar-active">Overview</span>
+      </div>
+      <div class="topbar-actions">
+        <button class="btn btn-ghost" onclick="doReset()">↺ Reset</button>
+        <button class="btn btn-ghost" onclick="window.open('/api/export-csv')">↓ CSV</button>
+        <button class="btn btn-primary" onclick="runBoth()">⚡ Chạy cả 2 kịch bản</button>
+      </div>
+    </div>
+
+    <!-- Scrollable content -->
+    <div class="content">
+
+      <!-- ══ VIEW: OVERVIEW ══ -->
+      <div data-view="overview" class="visible">
+        <div class="section-header">
+          <div class="section-title">Tổng quan hệ thống</div>
+          <div class="section-desc">Giám sát số liệu thời gian thực của toàn bộ phiên mở bán vé.</div>
+        </div>
+
+        <!-- KPI row -->
+        <div class="kpi-row">
+          <div class="kpi-card">
+            <div class="kpi-label">Vé trong kho (Redis)</div>
+            <div class="kpi-value" id="kpi-redis">100</div>
+            <div class="kpi-sub">/ 100 ban đầu</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Đơn Atomic</div>
+            <div class="kpi-value green" id="kpi-atomic">0</div>
+            <div class="kpi-sub">✓ Zero oversell</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Đơn Naive</div>
+            <div class="kpi-value" id="kpi-naive">0</div>
+            <div class="kpi-sub" id="kpi-naive-sub">Chờ chạy test</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Tổng request</div>
+            <div class="kpi-value amber" id="kpi-total">0</div>
+            <div class="kpi-sub">logged</div>
+          </div>
+        </div>
+
+        <!-- Quick benchmark buttons -->
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-bottom:18px;">
+          <div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:4px;">Chạy thử nghiệm nhanh</div>
+          <div style="font-size:11px;color:var(--text-muted);margin-bottom:12px;">Bắn tải đồng thời 300 request để quan sát hiện tượng Race Condition.</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn btn-danger" id="btn-naive-main" onclick="runBenchmark('naive',300)">
+              ⚡ Naive (SQLite) — 300 req
+            </button>
+            <button class="btn btn-ghost" style="border-color:rgba(34,197,94,0.3);color:var(--green);" id="btn-atomic-main" onclick="runBenchmark('atomic',300)">
+              ✓ Atomic (Redis) — 300 req
+            </button>
+            <button class="btn btn-ghost" onclick="buySingle('naive')">In 1 vé Naive</button>
+            <button class="btn btn-ghost" onclick="buySingle('atomic')">In 1 vé Atomic</button>
+          </div>
+        </div>
+
+        <!-- Oversell banner -->
+        <div id="oversell-banner" class="alert-banner">
+          <span>⚠</span>
+          <span id="oversell-text">Phát hiện bán âm vé!</span>
+        </div>
+      </div>
+
+      <!-- ══ VIEW: COMPARE ══ -->
+      <div data-view="compare">
+        <div class="section-header">
+          <div class="section-title">So sánh kịch bản kỹ thuật</div>
+          <div class="section-desc">Đối chiếu trực tiếp hai cơ chế xử lý tồn kho dưới tải đồng thời cao.</div>
+        </div>
+
+        <div class="compare-grid">
+          <!-- NAIVE PANEL -->
+          <div class="panel">
+            <div class="panel-header">
+              <div>
+                <div class="panel-title">Kịch bản 1: Naive SQLite</div>
+                <div class="panel-subtitle">Read → Check → Write (không khóa)</div>
+              </div>
+              <div class="tag tag-red">UNSAFE</div>
+            </div>
+            <div class="panel-body">
+              <div class="metric-row">
+                <span class="metric-name">Đơn hàng ghi được</span>
+                <span class="metric-val red" id="c-naive-orders">0</span>
+              </div>
+              <div class="metric-row">
+                <span class="metric-name">Vé còn trong DB</span>
+                <span class="metric-val" id="c-naive-remaining">100</span>
+              </div>
+              <div class="metric-row">
+                <span class="metric-name">Latency p50</span>
+                <span class="metric-val" id="c-naive-p50">—</span>
+              </div>
+              <div class="metric-row">
+                <span class="metric-name">Latency p99</span>
+                <span class="metric-val red" id="c-naive-p99">—</span>
+              </div>
+              <div class="metric-row">
+                <span class="metric-name">Tính nhất quán</span>
+                <span class="metric-val red" id="c-naive-consistent">Chưa test</span>
+              </div>
+              <div class="progress-wrap">
+                <div class="progress-label">
+                  <span>Tiến trình bán vé</span>
+                  <span id="c-naive-pct">0%</span>
+                </div>
+                <div class="progress-bar"><div class="progress-fill red" id="naive-fill" style="width:0%"></div></div>
+              </div>
+              <div id="c-naive-alert" class="alert-banner" style="margin-top:8px;">
+                <span>⚠</span>
+                <span id="c-naive-alert-text">Overselling detected!</span>
+              </div>
+            </div>
+            <div class="panel-footer">
+              <button class="btn btn-danger" id="btn-bench-naive" onclick="runBenchmark('naive',300)" style="flex:1;">⚡ Bắn 300 req</button>
+              <button class="btn btn-ghost" onclick="buySingle('naive')">+1</button>
+            </div>
+          </div>
+
+          <!-- ATOMIC PANEL -->
+          <div class="panel">
+            <div class="panel-header">
+              <div>
+                <div class="panel-title">Kịch bản 2: Redis Atomic</div>
+                <div class="panel-subtitle">DECR single-threaded (nguyên tử)</div>
+              </div>
+              <div class="tag tag-green">SAFE</div>
+            </div>
+            <div class="panel-body">
+              <div class="metric-row">
+                <span class="metric-name">Đơn hàng ghi được</span>
+                <span class="metric-val green" id="c-atomic-orders">0</span>
+              </div>
+              <div class="metric-row">
+                <span class="metric-name">Vé còn trong Redis</span>
+                <span class="metric-val" id="c-atomic-stock">100</span>
+              </div>
+              <div class="metric-row">
+                <span class="metric-name">Latency p50</span>
+                <span class="metric-val green" id="c-atomic-p50">—</span>
+              </div>
+              <div class="metric-row">
+                <span class="metric-name">Latency p99</span>
+                <span class="metric-val" id="c-atomic-p99">—</span>
+              </div>
+              <div class="metric-row">
+                <span class="metric-name">Tính nhất quán</span>
+                <span class="metric-val green" id="c-atomic-consistent">Zero Oversell ✓</span>
+              </div>
+              <div class="progress-wrap">
+                <div class="progress-label">
+                  <span>Tiến trình bán vé</span>
+                  <span id="c-atomic-pct">0%</span>
+                </div>
+                <div class="progress-bar"><div class="progress-fill green" id="atomic-fill" style="width:0%"></div></div>
+              </div>
+            </div>
+            <div class="panel-footer">
+              <button class="btn btn-ghost" id="btn-bench-atomic" onclick="runBenchmark('atomic',300)" style="flex:1;border-color:rgba(34,197,94,0.3);color:var(--green);">✓ Bắn 300 req</button>
+              <button class="btn btn-ghost" onclick="buySingle('atomic')">+1</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ══ VIEW: SEATMAP ══ -->
+      <div data-view="seatmap">
+        <div class="section-header">
+          <div class="section-title">Sơ đồ khán đài VIP (100 ghế)</div>
+          <div class="section-desc">Trực quan hóa trạng thái từng ghế theo thời gian thực. Ghế đỏ = bán âm (Naive).</div>
+        </div>
+
+        <div class="seat-panel">
+          <div class="seat-panel-header">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <span style="font-size:13px;font-weight:700;color:var(--text);">🎬 Rạp Chiếu Phim — Khu Ghế VIP</span>
+              <span style="font-size:10px;font-family:'Geist Mono',monospace;color:var(--text-dim);border:1px solid var(--border-light);padding:2px 7px;border-radius:4px;">100 SEATS</span>
+            </div>
+            <div style="display:flex;gap:8px;">
+              <button class="btn btn-danger" onclick="runBenchmark('naive',300)">⚡ Test Naive</button>
+              <button class="btn btn-ghost" onclick="runBenchmark('atomic',300)" style="border-color:rgba(34,197,94,0.3);color:var(--green);">✓ Test Atomic</button>
+              <button class="btn btn-ghost" onclick="doReset()">↺ Reset</button>
+            </div>
+          </div>
+
+          <!-- Cinema hall wallpaper (SVG drawn inline) -->
+          <div class="seat-map-wrap">
+            <!-- SVG cinema hall perspective walls, ceiling, floor -->
+            <svg class="cinema-hall-bg" viewBox="0 0 800 460" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <linearGradient id="floorGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stop-color="#1a0a0a" stop-opacity="0"/>
+                  <stop offset="100%" stop-color="#0d0508" stop-opacity="1"/>
+                </linearGradient>
+                <linearGradient id="ceilingGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stop-color="#0a0818" stop-opacity="1"/>
+                  <stop offset="100%" stop-color="#0a0818" stop-opacity="0"/>
+                </linearGradient>
+                <linearGradient id="leftWall" x1="0" y1="0" x2="1" y2="0">
+                  <stop offset="0%" stop-color="#2a0808" stop-opacity="0.9"/>
+                  <stop offset="100%" stop-color="#2a0808" stop-opacity="0"/>
+                </linearGradient>
+                <linearGradient id="rightWall" x1="0" y1="0" x2="1" y2="0">
+                  <stop offset="0%" stop-color="#2a0808" stop-opacity="0"/>
+                  <stop offset="100%" stop-color="#2a0808" stop-opacity="0.9"/>
+                </linearGradient>
+                <radialGradient id="screenGlow" cx="50%" cy="0%" r="60%">
+                  <stop offset="0%" stop-color="#c8c0ff" stop-opacity="0.12"/>
+                  <stop offset="100%" stop-color="#c8c0ff" stop-opacity="0"/>
+                </radialGradient>
+                <!-- Velvet texture pattern -->
+                <pattern id="velvet" x="0" y="0" width="4" height="8" patternUnits="userSpaceOnUse">
+                  <rect width="4" height="8" fill="none"/>
+                  <line x1="0" y1="0" x2="0" y2="8" stroke="rgba(200,100,100,0.08)" stroke-width="1"/>
+                </pattern>
+              </defs>
+              <!-- Ceiling -->
+              <rect x="0" y="0" width="800" height="120" fill="url(#ceilingGrad)"/>
+              <!-- Left wall (perspective trapezoid) -->
+              <polygon points="0,0 120,0 120,460 0,460" fill="url(#leftWall)"/>
+              <polygon points="0,0 120,0 120,460 0,460" fill="url(#velvet)" opacity="0.6"/>
+              <!-- Right wall -->
+              <polygon points="680,0 800,0 800,460 680,460" fill="url(#rightWall)"/>
+              <polygon points="680,0 800,0 800,460 680,460" fill="url(#velvet)" opacity="0.6"/>
+              <!-- Floor -->
+              <rect x="0" y="300" width="800" height="160" fill="url(#floorGrad)"/>
+              <!-- Screen ambient glow -->
+              <rect x="0" y="0" width="800" height="460" fill="url(#screenGlow)"/>
+              <!-- Decorative wall sconce lights (left) -->
+              <circle cx="30" cy="140" r="5" fill="#ff9944" opacity="0.5"/>
+              <circle cx="30" cy="140" r="18" fill="none" stroke="#ff9944" stroke-width="0.5" opacity="0.2"/>
+              <circle cx="30" cy="240" r="5" fill="#ff9944" opacity="0.5"/>
+              <circle cx="30" cy="240" r="18" fill="none" stroke="#ff9944" stroke-width="0.5" opacity="0.2"/>
+              <circle cx="30" cy="340" r="5" fill="#ff9944" opacity="0.5"/>
+              <!-- Decorative wall sconce lights (right) -->
+              <circle cx="770" cy="140" r="5" fill="#ff9944" opacity="0.5"/>
+              <circle cx="770" cy="140" r="18" fill="none" stroke="#ff9944" stroke-width="0.5" opacity="0.2"/>
+              <circle cx="770" cy="240" r="5" fill="#ff9944" opacity="0.5"/>
+              <circle cx="770" cy="240" r="18" fill="none" stroke="#ff9944" stroke-width="0.5" opacity="0.2"/>
+              <circle cx="770" cy="340" r="5" fill="#ff9944" opacity="0.5"/>
+              <!-- Ceiling lights strip -->
+              <line x1="120" y1="8" x2="680" y2="8" stroke="rgba(200,190,255,0.15)" stroke-width="2"/>
+              <line x1="120" y1="18" x2="680" y2="18" stroke="rgba(200,190,255,0.06)" stroke-width="4"/>
+              <!-- Aisle floor strip (center) -->
+              <rect x="390" y="200" width="20" height="260" fill="rgba(255,200,100,0.04)"/>
+              <!-- Exit sign top-left -->
+              <rect x="8" y="8" width="40" height="16" rx="2" fill="rgba(34,197,94,0.25)" stroke="rgba(34,197,94,0.5)" stroke-width="0.5"/>
+              <text x="28" y="19" text-anchor="middle" font-family="monospace" font-size="7" fill="rgba(34,197,94,0.8)">EXIT</text>
+              <!-- Exit sign top-right -->
+              <rect x="752" y="8" width="40" height="16" rx="2" fill="rgba(34,197,94,0.25)" stroke="rgba(34,197,94,0.5)" stroke-width="0.5"/>
+              <text x="772" y="19" text-anchor="middle" font-family="monospace" font-size="7" fill="rgba(34,197,94,0.8)">EXIT</text>
+            </svg>
+
+            <!-- Screen -->
+            <div class="screen-wrap">
+              <div class="stage-bar">— MÀN ẢNH —</div>
+            </div>
+
+            <!-- Seats -->
+            <div class="seats-area">
+              <div class="seats-grid" id="seats-grid"></div>
+            </div>
+
+            <!-- Legend -->
+            <div class="seat-legend">
+              <div class="legend-item">
+                <div class="legend-dot" style="background:rgba(34,197,94,0.4);border:1px solid rgba(34,197,94,0.6);"></div>
+                Còn trống (<span id="leg-available">100</span>)
+              </div>
+              <div class="legend-item">
+                <div class="legend-dot" style="background:#1c1c28;border:1px solid #2a2a3a;"></div>
+                Đã bán (<span id="leg-taken">0</span>)
+              </div>
+              <div class="legend-item">
+                <div class="legend-dot" style="background:rgba(239,68,68,0.4);border:1px solid rgba(239,68,68,0.65);"></div>
+                <span style="color:var(--red)">Bán âm (<span id="leg-over">0</span>)</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ══ VIEW: LOGS ══ -->
+      <div data-view="logs">
+        <div class="section-header">
+          <div class="section-title">Telemetry Log</div>
+          <div class="section-desc">Luồng log thời gian thực từng request — dữ liệu thô để phân tích Latency Distribution.</div>
+        </div>
+
+        <div class="terminal-panel">
+          <div class="terminal-header">
+            <div class="terminal-dots">
+              <div class="terminal-dot" style="background:#ef4444;"></div>
+              <div class="terminal-dot" style="background:#f59e0b;"></div>
+              <div class="terminal-dot" style="background:#22c55e;"></div>
+            </div>
+            <div style="font-size:11px;font-family:'Geist Mono',monospace;color:var(--text-muted);">
+              request_stream &bull; <span id="log-count">0</span> rows
+            </div>
+            <div style="font-size:10px;color:var(--text-dim);">auto-refresh 1.5s</div>
+          </div>
+          <div class="terminal-body" id="terminal-body">
+            <div style="color:var(--text-dim);">// Chưa có request nào. Hãy chạy thử nghiệm.</div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /content -->
+  </div><!-- /main -->
+</div><!-- /app -->
+
+<script>
+  // ─── State ───
+  let isTesting = false;
+  let currentView = 'overview';
+  let audioCtx = null;
+  let soundOn = true;
+
+  // ─── View switcher ───
+  function switchView(v) {
+    document.querySelectorAll('[data-view]').forEach(el => el.classList.remove('visible'));
+    document.querySelector(`[data-view="${v}"]`).classList.add('visible');
+    document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+    const items = document.querySelectorAll('.nav-item');
+    const map = { overview: 0, compare: 1, seatmap: 2, logs: 3 };
+    if (map[v] !== undefined) items[map[v]].classList.add('active');
+    const labels = { overview: 'Overview', compare: 'So sánh kịch bản', seatmap: 'Sơ đồ khán đài', logs: 'Telemetry Log' };
+    document.getElementById('topbar-active').innerText = labels[v] || v;
+    currentView = v;
+  }
+
+  // ─── Sound ───
+  function beep(ok=true) {
+    try {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      const osc = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      osc.connect(g); g.connect(audioCtx.destination);
+      if (ok) {
+        osc.frequency.setValueAtTime(900, audioCtx.currentTime);
+        osc.frequency.linearRampToValueAtTime(1200, audioCtx.currentTime + 0.06);
+        g.gain.setValueAtTime(0.05, audioCtx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.1);
+        osc.start(); osc.stop(audioCtx.currentTime + 0.1);
+      } else {
+        osc.frequency.setValueAtTime(200, audioCtx.currentTime);
+        g.gain.setValueAtTime(0.04, audioCtx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.12);
+        osc.start(); osc.stop(audioCtx.currentTime + 0.12);
+      }
+    } catch(e) {}
+  }
+
+  // ─── Init seat map ───
+  function initSeats() {
+    const g = document.getElementById('seats-grid');
+    if (!g) return;
+    g.innerHTML = '';
+    const rows = 'ABCDEFGHIJ';
+    for (let r = 0; r < 10; r++) {
+      for (let c = 1; c <= 10; c++) {
+        const d = document.createElement('div');
+        d.className = 'seat available';
+        d.id = `seat-${r*10+c}`;
+        d.title = `${rows[r]}${String(c).padStart(2,'0')}`;
+        d.innerText = rows[r] + (c < 10 ? '0'+c : c);
+        g.appendChild(d);
+      }
+    }
+  }
+
+  function updateSeats(sold) {
+    const over = Math.max(0, sold - 100);
+    document.getElementById('leg-available').innerText = Math.max(0, 100 - sold);
+    document.getElementById('leg-taken').innerText = Math.min(100, sold);
+    document.getElementById('leg-over').innerText = over;
+    const g = document.getElementById('seats-grid');
+
+    // Remove any old oversold extras
+    g.querySelectorAll('.seat.oversold').forEach(s => s.remove());
+
+    for (let i = 1; i <= 100; i++) {
+      const s = document.getElementById(`seat-${i}`);
+      if (!s) continue;
+      if (i <= Math.min(sold, 100)) { s.className = 'seat taken'; }
+      else { s.className = 'seat available'; }
+    }
+    for (let j = 1; j <= over; j++) {
+      const d = document.createElement('div');
+      d.className = 'seat oversold';
+      d.innerText = '+' + j;
+      d.title = 'Ghế bán âm';
+      g.appendChild(d);
+    }
+  }
+
+  // ─── Update UI from status ───
+  async function updateStatus() {
+    try {
+      const res = await fetch('/api/status');
+      const { db, redis_stock, is_fake_redis, recent_logs } = await res.json();
+
+      // KPI
+      const kpiRedis = document.getElementById('kpi-redis');
+      kpiRedis.innerText = redis_stock;
+      kpiRedis.className = 'kpi-value' + (redis_stock <= 0 ? ' red' : '');
+
+      document.getElementById('kpi-atomic').innerText = db.atomic_orders;
+      document.getElementById('kpi-naive').innerText  = db.naive_orders;
+      document.getElementById('kpi-total').innerText  = db.total_requests;
+
+      // Naive sub
+      const over = db.naive_orders - 100;
+      const naiveSub = document.getElementById('kpi-naive-sub');
+      const kpiNaive = document.getElementById('kpi-naive');
+      if (db.naive_orders > 100) {
+        naiveSub.innerText = `⚠ Bán lố ${over} vé!`;
+        naiveSub.style.color = 'var(--red)';
+        kpiNaive.className = 'kpi-value red';
+      } else {
+        naiveSub.innerText = db.naive_orders > 0 ? `Đã bán ${db.naive_orders}/100` : 'Chưa test';
+        naiveSub.style.color = '';
+        kpiNaive.className = 'kpi-value';
+      }
+
+      // Compare panel
+      document.getElementById('c-naive-orders').innerText    = db.naive_orders;
+      document.getElementById('c-naive-remaining').innerText = db.db_remaining_stock;
+      document.getElementById('c-atomic-orders').innerText   = db.atomic_orders;
+      document.getElementById('c-atomic-stock').innerText    = redis_stock;
+
+      const naivePct = Math.min(100, (db.naive_orders / 100 * 100)).toFixed(0);
+      const atomicPct = Math.min(100, (db.atomic_orders / 100 * 100)).toFixed(0);
+      document.getElementById('naive-fill').style.width  = naivePct + '%';
+      document.getElementById('atomic-fill').style.width = atomicPct + '%';
+      document.getElementById('c-naive-pct').innerText   = naivePct + '%';
+      document.getElementById('c-atomic-pct').innerText  = atomicPct + '%';
+
+      // Consistency label
+      if (db.naive_orders > 0) {
+        document.getElementById('c-naive-consistent').innerText = db.naive_orders > 100 ? `❌ Bán lố ${db.naive_orders - 100} vé` : '✓ Chưa thấy vấn đề';
+        document.getElementById('c-naive-consistent').className = 'metric-val ' + (db.naive_orders > 100 ? 'red' : 'green');
+      }
+
+      // Oversell banners
+      const showBanner = db.naive_orders > 100;
+      const banner1 = document.getElementById('oversell-banner');
+      const banner2 = document.getElementById('c-naive-alert');
+      if (showBanner) {
+        const msg = `Bán lố ${db.naive_orders - 100} vé | Naive orders: ${db.naive_orders}/100`;
+        banner1.classList.add('show'); banner2.classList.add('show');
+        document.getElementById('oversell-text').innerText = msg;
+        document.getElementById('c-naive-alert-text').innerText = msg;
+      } else {
+        banner1.classList.remove('show'); banner2.classList.remove('show');
+      }
+
+      // Seat map
+      const totalSold = Math.max(db.naive_orders, db.atomic_orders);
+      updateSeats(totalSold);
+
+      // Logs badge
+      document.getElementById('badge-logs').innerText = db.total_requests;
+
+      // Redis badge
+      document.getElementById('redis-label').innerText = is_fake_redis ? 'In-Memory' : 'Cloud Redis';
+
+      // Render logs
+      renderLogs(recent_logs);
+    } catch(e) { console.error(e); }
+  }
+
+  function renderLogs(logs) {
+    if (!logs || !logs.length) return;
+    const body = document.getElementById('terminal-body');
+    document.getElementById('log-count').innerText = logs.length;
+    body.innerHTML = logs.map(l => {
+      const t = new Date(l.created_at * 1000).toLocaleTimeString('vi-VN');
+      const modeClass = l.mode === 'atomic' ? 'log-mode-atomic' : 'log-mode-naive';
+      const statusEl = l.status === 'SUCCESS'
+        ? `<span class="log-ok">SUCCESS</span>`
+        : `<span class="log-fail">SOLD_OUT</span>`;
+      return `<div class="log-row">
+        <span class="log-time">[${t}]</span>
+        <span class="${modeClass}">[${l.mode.toUpperCase()}]</span>
+        <span class="log-user">${l.user_id}</span>
+        ${statusEl}
+        <span class="log-ms">${l.latency_ms}ms</span>
+      </div>`;
+    }).join('');
+    body.scrollTop = 0;
+  }
+
+  // ─── Actions ───
+  async function buySingle(mode) {
+    const res = await fetch(`/api/buy-${mode}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: `User_${Math.random().toString(36).slice(2,7).toUpperCase()}` })
+    });
+    const d = await res.json();
+    beep(d.status === 'SUCCESS');
+    updateStatus();
+  }
+
+  async function runBenchmark(mode, n) {
+    if (isTesting) return;
+    isTesting = true;
+    const btnIds = { naive: ['btn-naive-main', 'btn-bench-naive'], atomic: ['btn-atomic-main', 'btn-bench-atomic'] };
+    const btns = btnIds[mode].map(id => document.getElementById(id)).filter(Boolean);
+    const orig = btns.map(b => b.innerText);
+    btns.forEach(b => { b.innerText = `⏳ Đang chạy (${n} req)...`; b.disabled = true; });
+    beep(true);
+
+    const tasks = Array.from({length: n}, (_, i) =>
+      fetch(`/api/buy-${mode}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: `Buyer_${i+1}` })
+      }).catch(() => null)
+    );
+    await Promise.all(tasks);
+
+    btns.forEach((b, i) => { b.innerText = orig[i]; b.disabled = false; });
+    isTesting = false;
+    beep(true);
+    updateStatus();
+  }
+
+  async function runBoth() {
+    await runBenchmark('naive', 300);
+    await new Promise(r => setTimeout(r, 500));
+    await fetch('/api/reset', { method: 'POST' });
+    await runBenchmark('atomic', 300);
+  }
+
+  async function doReset() {
+    await fetch('/api/reset', { method: 'POST' });
+    beep(true);
+    updateStatus();
+  }
+
+  // ─── Boot ───
+  initSeats();
+  updateStatus();
+  setInterval(updateStatus, 1500);
+</script>
+</body>
+</html>
